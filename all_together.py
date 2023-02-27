@@ -5,7 +5,7 @@ from dash import Dash, dcc, html, Input, Output, ctx  # pip install dash (versio
 from datetime import date
 from sklearn import preprocessing
 import dash_bootstrap_components as dbc
-#import fred_scraper
+import fred_scraper
 import os
 
 
@@ -17,12 +17,18 @@ app = Dash(__name__,
            external_stylesheets=external_stylesheets)
 
 
-
 # Import and clean data 
-df = pd.read_csv("data.csv")
-df['DATE'] = pd.to_datetime(df['DATE'], utc=True)
-index = df['DATE'] 
-df = df.set_index('DATE')
+try:
+    my_instance = fred_scraper.fred_retriever()
+    df = my_instance.merge()
+    df.to_csv(os.getcwd() + '/data.csv')
+    index = df.index
+except:
+    print("failed to download data")
+    df = pd.read_csv("data.csv")
+    df['DATE'] = pd.to_datetime(df['DATE'], utc=True)
+    index = df['DATE'] 
+    df = df.set_index('DATE')
 
 def scaler(df):
     x = df.values
@@ -60,7 +66,6 @@ app.layout = html.Div([
             value=['ECOGROWTH'],
             labelStyle={'fontSize': '20px', 'margin-right': '5px'}
         ),
-        html.Button('Refresh data', id='refresh', n_clicks=0),
 
         html.Br(),
 
@@ -121,27 +126,13 @@ app.layout = html.Div([
      Output(component_id='compare_plot', component_property='figure'),
      Output(component_id='compare_slider_plot', component_property='figure')],
 
-    [Input(component_id='refresh', component_property= 'n_clicks'),
-     Input(component_id='select_variables', component_property='value'),
+    [Input(component_id='select_variables', component_property='value'),
      Input(component_id='select_cycle', component_property='value'),
      Input(component_id='select_year', component_property='value')]
 )
 
 
-def update_graph(clicked, variables, cycle, slider):
-   # print(variables)
-   # print(cycle)
-   # print(slider)
-    print(clicked)
-
-    # if button is clicked refresh data (scrape fred stlouis)
-    if "button" == ctx.triggered_id:
-        print(clicked)
-
-       # my_instance = fred_scraper.fred_retriever()
-       # data = my_instance.merge()
-       # data.to_csv(os.getcwd() + '/data.csv')
-
+def update_graph(variables, cycle, slider):
     # graphs layout
     layout = go.Layout(
         title={

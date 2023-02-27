@@ -10,6 +10,9 @@ from sklearn import preprocessing
 
 
 class fred_retriever():
+    """
+    Entity that scrapes fred and returns merged dataframe
+    """
     def __init__(self):
         
         self.measures = {'nasdaqcom' :'NASDAQCOM', 'nyse' : 'BOGZ1FL073164003Q', 'willshire' : 'WILL5000INDFC', 
@@ -56,6 +59,9 @@ class fred_retriever():
 
 
     def preprocess_data(self, df):
+        """
+        Method to clean data, interpolate nans, convert to numeric and feature engineer columns (to change)
+        """
       #  df.set_index('DATE', inplace=True)
         
         df= df.loc[df.index > '01-01-1971']
@@ -125,6 +131,9 @@ class fred_retriever():
     
     
     def merge(self):
+        """
+        Method to merge all the datasets
+        """
         # retrieve all the measures 
         dataframes=[]
         for i in range(0, len(self.measures)):
