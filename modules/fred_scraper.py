@@ -26,6 +26,7 @@ class fred_retriever:
             "leverage": "NFCILEVERAGE",
             "M2": "M2SL",
             "cpi": "FPCPITOTLZGUSA",
+            "cpi1": "CPIAUCSL",
             "expenditures": "PCECTPI",
             "oil": "DCOILWTICO",
             "core_inflation": "CORESTICKM159SFRBATL",

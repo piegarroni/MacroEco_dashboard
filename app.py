@@ -9,11 +9,13 @@ from dash import (
     Output,
     ctx,
 )  # pip install dash (version 2.0.0 or higher)
-from datetime import date
+from datetime import date, datetime
 from sklearn import preprocessing
 import dash_bootstrap_components as dbc
 import modules.fred_scraper as fred_scraper
 import os
+import numpy as np
+
 
 
 # external css static
@@ -25,6 +27,7 @@ app = Dash(__name__, external_stylesheets=external_stylesheets)
 
 # Import and clean data
 try:
+    print('data just downloaded')
     my_instance = fred_scraper.fred_retriever()
     df = my_instance.run()
     df.to_csv(os.getcwd() + "/data.csv")
@@ -36,7 +39,7 @@ except:
     index = df["DATE"]
     df = df.set_index("DATE")
 
-
+print(df.columns)
 # bottoms economy
 bottoms = [
     "04-01-1975",
@@ -49,14 +52,188 @@ bottoms = [
     str(date.today()),
 ]
 
+
+
 # days ranges
-days = [i for i in range(0, 13574)]
-df_dates = [i.date() for i in df.index]
+start_date = "2000-01-22"
+end_date  = datetime.today().strftime('%Y-%m-%d')
+date_range = pd.date_range(start=start_date, end=end_date, freq="B")
+
+
+# Define graphs layout
+layout = go.Layout(
+    title={"text": "Economy history", "font": {"size": 24}},
+    xaxis={"title": "Date", "titlefont": {"size": 20}, "tickfont": {"size": 16}},
+    yaxis={
+        "title": "Scaled Value",
+        "titlefont": {"size": 20},
+        "tickfont": {"size": 16},
+    },
+    plot_bgcolor="#d7d9e0",
+)
+
+def preprocess_quadrants(df):
+    # growth
+
+    dff = df.copy()
+
+    dff['GDP'] = pd.to_numeric(dff['GDP'])
+    # Calculate inflation rate
+    dff['GDP_rate'] = (dff['GDP'] - dff['GDP'].shift(1)) / dff['GDP'].shift(1)
+
+    # Convert inflation rate to percentage
+    dff['GDP_rate']  = dff['GDP_rate']  * 100
+
+
+    # Smoothen it
+    dff['GDP_rate'] = dff['GDP_rate'].rolling(4).mean() - 0.745
+
+    dff['GDP_rate_log'] = np.log10(dff['GDP_rate'])
+    dff['GDP_rate_log'] =dff['GDP_rate_log'].fillna(-400)
+
+    #inflation
+
+    dff['CPIAUCSL'] = pd.to_numeric(dff['CPIAUCSL'])
+    # Calculate inflation rate
+    dff['CPIAUCSL_rate'] = (dff['CPIAUCSL'] - dff['CPIAUCSL'].shift(1)) / dff['CPIAUCSL'].shift(1)
+
+    # Convert inflation rate to percentage
+    dff['CPIAUCSL_rate'] = dff['CPIAUCSL_rate'] * 1000
+
+  
+    # Smoothen it
+
+    dff['CPIAUCSL_rate'] = dff['CPIAUCSL_rate'].rolling(24).mean() -1.9
+
+    #log 
+    dff['CPIAUCSL_rate_log'] = np.log10(-dff['CPIAUCSL_rate'])
+    dff['CPIAUCSL_rate_log'] = dff['CPIAUCSL_rate_log'].fillna(-400)
+
+
+
+    quadrant = []
+    for i in range(len(dff)):
+        if dff['GDP_rate_log'][i] != -400 and dff['CPIAUCSL_rate_log'][i] == -400:
+            quadrant.append(1)
+            #print('invest in ("Quadrant 1: Inflation up, GDP up")') #quadrant 1 consists of the following assets= ["Emerging equities", "International real estate", "Gold", "Commodities", "emerging bond spreads", "Inflation protected bonds"]  
+        elif dff['GDP_rate_log'][i] == -400 and dff['CPIAUCSL_rate_log'][i] == -400:
+            quadrant.append(2)
+
+            #print('invest in ("Quadrant 2: Inflation up, GDP down")') # quadrant 2 consists of the following assets= ["Gold", "Commodities", "Emerging bond spreads", "Inflation protected bonds", "cash"]
+        elif dff['GDP_rate_log'][i] == -400 and dff['CPIAUCSL_rate_log'][i] != -400:
+            quadrant.append(3)
+            #print('invest in ("Quadrant 3: Inflation down, GDP up")') # quadrant 3 consists of the following assets= ["Developed corporate bond spreads", "intermediate treasuries", "Developed real estate", "Developed equities"]  
+        elif dff['GDP_rate_log'][i] != -400 and dff['CPIAUCSL_rate_log'][i] != -400: # add if to remember state
+            quadrant.append(4)
+            #print('invest in ("Quadrant 4: Inflation down, GDP down")') #quadrant 4 consists of the following assets = ["Gold", "Long term treasuries", "cash"]
+        else:
+            quadrant.append(np.nan)
+
+  
+
+    # clean quadrants
+    quadrants = [i for i in  quadrant]
+    for i in range(1, len(quadrants)):
+        if quadrants[i] ==4 and quadrants[i-1] == 1:
+            quadrants[i]=1
+        
+
+    dff['quadrant_cleaned'] = quadrants
+
+    return dff['quadrant_cleaned']
+
+  
+
+def visualize_quadrants(series):
+    """
+    Function to visualize the macroeconomical quadratns
+    """
+    
+    fig = go.Figure(layout=layout)
+  
+    fig.add_trace(go.Scatter(x=series.index, y=series, mode='lines')) ###  x, y ????
+    fig.update_layout(title='Economical quadrant history',
+                      xaxis_title='Date',
+                      yaxis_title='Quadrant')
+    return fig
+
+
+
+def visualize_history(variables):
+    """
+    Function to visualize the Relative Rotation Graph of the selected symbol
+    """
+
+    dff = df.copy()
+    hist = go.Figure(layout=layout)
+    for column in variables:
+        # smoothen
+        dff[column] = dff[column].rolling(window=45).mean()
+        # Plotly Express
+        hist.add_trace(
+            go.Scatter(
+                x=dff.index, y=dff[column], mode="lines", name=column, opacity=0.7
+            )
+        )
+
+    return hist
+
+
+def visualize_compare(variables, timerange):
+    dff = df.copy()
+
+    index = dff.index
+
+    past_cycle = dff.loc[
+        (dff.index > dff.index[timerange[0]]) & (df.index < dff.index[timerange[1]])
+    ]
+    present_cycle = dff.loc[(dff.index > bottoms[-2])]
+
+    index = [i for i in past_cycle.index]
+
+    fig =  go.Figure(layout=layout)
+    for column in variables:
+        # set origin = 0
+        past_cycle[column] = past_cycle[column] - past_cycle[column][0]
+        present_cycle[column] = present_cycle[column] - present_cycle[column][0]
+        # smoothen variables
+        past_cycle[column] = past_cycle[column].rolling(window=45).mean()
+        present_cycle[column] = present_cycle[column].rolling(window=45).mean()
+
+        fig.add_trace(
+            go.Scatter(
+                x=index,
+                y=past_cycle[column],
+                mode="lines",
+                name=f"{column} past",
+                opacity=0.7,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=index,
+                y=present_cycle[column],
+                mode="lines",
+                name=f"{column}  present",
+                opacity=0.7,
+            )
+        )
+
+    # update layout with new title
+    fig.update_layout(
+        title={
+            "text": "Economic cycles comparison (present vs past)",
+            "font": {"size": 24},
+        }
+    )
+    return fig
+
 
 # ------------------------------------------------------------------------------
 # App layout
 app.layout = html.Div(
     [
+        # ----------------------------------------------------------- first graph
         html.H1(
             "Visualization Tool for History Economy", style={"text-align": "center"}
         ),
@@ -70,57 +247,26 @@ app.layout = html.Div(
                 {"label": "  Nyse ", "value": "BOGZ1FL073164003Q"},
                 {"label": "  Willshire ", "value": "WILL5000INDFC"},
                 {"label": "  5y Breakeven Inflation", "value": "T5YIE"},
+                {"label": "  GDP", "value": "GDP"},
+                {"label": "  CPI", "value": "CPIAUCSL"},
+
             ],
             value=["ECOGROWTH"],
             labelStyle={"fontSize": "20px", "margin-right": "5px"},
         ),
-        html.Br(),
-        dcc.Graph(
-            id="history_plot",
-            figure={},
-            style={"width": "100%", "height": "67vh", "backgroundColor": "black"},
-        ),
-        html.Br(),
-        html.Br(),
-        html.H1(
-            "Visualization Tool for Past Economic Cycles",
-            style={"text-align": "center"},
-        ),
-        html.Br(),
-        dcc.Dropdown(
-            id="select_cycle",
-            options=[
-                {"label": "1975-1982", "value": 0},
-                {"label": "1982-1992", "value": 1},
-                {"label": "1992-2002", "value": 2},
-                {"label": "2002-2009", "value": 3},
-                {"label": "2009-2020", "value": 4},
-            ],
-            multi=False,
-            value=4,
-            style={"width": "40%", "fontsize": "25px"},
-        ),
-        html.Br(),
-        dcc.Graph(
-            id="compare_plot", figure={}, style={"width": "100%", "height": "67vh"}
-        ),
-        html.Br(),
-        html.Br(),
-        html.H1("Comparison with slider", style={"text-align": "center"}),
-        html.Br(),
         html.Div(
             dcc.RangeSlider(
                 id="select_year",
                 marks={
                     i: {
-                        "label": "   " + str(df_dates[i]),
+                        "label": "   " + str(date_range[i]),
                         "style": {"transform": "rotate(45deg)", "color": "white"},
                     }
-                    for i in range(0, len(days), 200)
+                    for i in range(0, len(date_range), 200)
                 },
                 min=0,
-                max=len(days) - 1,
-                value=[0, len(days) - 1],
+                max=len(date_range) - 1,
+                value=[0, len(date_range) - 1],
             ),
             style={
                 "margin-left": "50px",
@@ -130,6 +276,34 @@ app.layout = html.Div(
             },
         ),
         html.Br(),
+
+        dcc.Graph(
+            id="history_plot",
+            figure={},
+            style={"width": "100%", "height": "67vh", "backgroundColor": "black"},
+        ),
+        html.Br(),
+        html.Br(),
+
+
+        # ----------------------------------------------------------------------- second graph
+        html.H1(
+            "4 Quadrants visualization history",
+            style={"text-align": "center"},
+        ),
+        html.Br(),
+       
+        dcc.Graph(
+            id="quadrants", figure={}, style={"width": "100%", "height": "67vh"}
+        ),
+        html.Br(),
+        html.Br(),
+
+
+        # ---------------------------------------------------------------------- third graph
+        html.H1("Compare current cycles with historical data", style={"text-align": "center"}),
+        html.Br(),
+      
         html.Div(id="output"),
         html.Br(),
         dcc.Graph(
@@ -146,151 +320,23 @@ app.layout = html.Div(
 
 
 # ------------------------------------------------------------------------------
-# Connect the Plotly graphs with Dash Components
 @app.callback(
     [
         Output(component_id="output_container", component_property="children"),
         Output(component_id="history_plot", component_property="figure"),
-        Output(component_id="compare_plot", component_property="figure"),
+        Output(component_id="quadrants", component_property="figure"),
         Output(component_id="compare_slider_plot", component_property="figure"),
     ],
     [
         Input(component_id="select_variables", component_property="value"),
-        Input(component_id="select_cycle", component_property="value"),
         Input(component_id="select_year", component_property="value"),
     ],
 )
-def update_graph(variables, cycle, slider):
-    # Define graphs layout
-    layout = go.Layout(
-        title={"text": "Economy history", "font": {"size": 24}},
-        xaxis={"title": "Date", "titlefont": {"size": 20}, "tickfont": {"size": 16}},
-        yaxis={
-            "title": "Scaled Value",
-            "titlefont": {"size": 20},
-            "tickfont": {"size": 16},
-        },
-        plot_bgcolor="#d7d9e0",
-    )
+def update_graph(variables, slider):
 
-    # print variables selection
-    container = f"The variables chosen by user was: {variables}, the cycle chosen was {bottoms[cycle]} to {bottoms[cycle+1]}"
+    container = f"The variables chosen by user was: {variables}"
 
-    # --------------------------------
-    # first graph: historical data
-    dff = df.copy()
-    hist = go.Figure(layout=layout)
-    for column in variables:
-        # smoothen
-        dff[column] = dff[column].rolling(window=45).mean()
-        # Plotly Express
-        hist.add_trace(
-            go.Scatter(
-                x=dff.index, y=dff[column], mode="lines", name=column, opacity=0.7
-            )
-        )
-
-    # -------------------------------
-    # second graph: cycles visualization and comparison
-
-    dff = df.copy()
-
-    # loc data on right cycle
-    past_cycle = dff.loc[(dff.index > bottoms[cycle]) & (df.index < bottoms[cycle + 1])]
-    present_cycle = dff.loc[(dff.index > bottoms[-2])]
-    index = [i for i in past_cycle.index]
-
-    comparison = go.Figure(layout=layout)
-
-    # for column in callback plot it
-    for column in variables:
-        # origin = 0
-        past_cycle[column] = past_cycle[column] - past_cycle[column][0]
-        present_cycle[column] = present_cycle[column] - present_cycle[column][0]
-        # smoothen
-        past_cycle[column] = past_cycle[column].rolling(window=45).mean()
-        present_cycle[column] = present_cycle[column].rolling(window=45).mean()
-
-        # Plotly Express
-        comparison.add_trace(
-            go.Scatter(
-                x=index,
-                y=past_cycle[column],
-                mode="lines",
-                name=f"{column} past",
-                opacity=0.7,
-            )
-        )
-        comparison.add_trace(
-            go.Scatter(
-                x=index,
-                y=present_cycle[column],
-                mode="lines",
-                name=f"{column}  present",
-                opacity=0.7,
-            )
-        )
-
-    # update layout with new title
-    comparison.update_layout(
-        title={
-            "text": "Economic cycles comparison (present vs past)",
-            "font": {"size": 24},
-        }
-    )
-
-    # --------------------------------------
-    # third graph: comparison on date range
-
-    dff = df.copy()
-
-    index = dff.index
-
-    past_cycle = dff.loc[
-        (dff.index > dff.index[slider[0]]) & (df.index < dff.index[slider[1]])
-    ]
-    present_cycle = dff.loc[(dff.index > bottoms[-2])]
-
-    index = [i for i in past_cycle.index]
-
-    comparison_slider = go.Figure(layout=layout)
-    for column in variables:
-        # origin = 0
-        past_cycle[column] = past_cycle[column] - past_cycle[column][0]
-        present_cycle[column] = present_cycle[column] - present_cycle[column][0]
-        # smoothen
-        past_cycle[column] = past_cycle[column].rolling(window=45).mean()
-        present_cycle[column] = present_cycle[column].rolling(window=45).mean()
-
-        # Plotly Express
-        comparison_slider.add_trace(
-            go.Scatter(
-                x=index,
-                y=past_cycle[column],
-                mode="lines",
-                name=f"{column} past",
-                opacity=0.7,
-            )
-        )
-        comparison_slider.add_trace(
-            go.Scatter(
-                x=index,
-                y=present_cycle[column],
-                mode="lines",
-                name=f"{column}  present",
-                opacity=0.7,
-            )
-        )
-
-    # update layout with new title
-    comparison_slider.update_layout(
-        title={
-            "text": "Economic cycles comparison_slider (present vs past)",
-            "font": {"size": 24},
-        }
-    )
-
-    return container, hist, comparison, comparison_slider
+    return container, visualize_history(variables), visualize_quadrants(preprocess_quadrants(df)), visualize_compare(variables, slider)
 
 
 # ------------------------------------------------------------------------------
