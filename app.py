@@ -1,5 +1,4 @@
 import pandas as pd
-import plotly.express as px  # (version 4.7.0 or higher)
 import plotly.graph_objects as go
 from dash import (
     Dash,
@@ -10,9 +9,10 @@ from dash import (
     ctx,
 )  # pip install dash (version 2.0.0 or higher)
 from datetime import date, datetime
-from sklearn import preprocessing
 import dash_bootstrap_components as dbc
 import modules.fred_scraper as fred_scraper
+from modules.quadrants_module import *
+
 import os
 import numpy as np
 
@@ -39,12 +39,11 @@ except:
     index = df["DATE"]
     df = df.set_index("DATE")
 
-print(df.columns)
+df = df.loc[df.index> '01-01-2000']
+
+print(df)
 # bottoms economy
 bottoms = [
-    "04-01-1975",
-    "12-01-1982",
-    "03-01-1992",
     "08-01-2002",
     "03-01-2009",
     "05-01-2020",
@@ -71,76 +70,6 @@ layout = go.Layout(
     },
     plot_bgcolor="#d7d9e0",
 )
-
-def preprocess_quadrants(df):
-    # growth
-
-    dff = df.copy()
-
-    dff['GDP'] = pd.to_numeric(dff['GDP'])
-    # Calculate inflation rate
-    dff['GDP_rate'] = (dff['GDP'] - dff['GDP'].shift(1)) / dff['GDP'].shift(1)
-
-    # Convert inflation rate to percentage
-    dff['GDP_rate']  = dff['GDP_rate']  * 100
-
-
-    # Smoothen it
-    dff['GDP_rate'] = dff['GDP_rate'].rolling(4).mean() - 0.745
-
-    dff['GDP_rate_log'] = np.log10(dff['GDP_rate'])
-    dff['GDP_rate_log'] =dff['GDP_rate_log'].fillna(-400)
-
-    #inflation
-
-    dff['CPIAUCSL'] = pd.to_numeric(dff['CPIAUCSL'])
-    # Calculate inflation rate
-    dff['CPIAUCSL_rate'] = (dff['CPIAUCSL'] - dff['CPIAUCSL'].shift(1)) / dff['CPIAUCSL'].shift(1)
-
-    # Convert inflation rate to percentage
-    dff['CPIAUCSL_rate'] = dff['CPIAUCSL_rate'] * 1000
-
-  
-    # Smoothen it
-
-    dff['CPIAUCSL_rate'] = dff['CPIAUCSL_rate'].rolling(24).mean() -1.9
-
-    #log 
-    dff['CPIAUCSL_rate_log'] = np.log10(-dff['CPIAUCSL_rate'])
-    dff['CPIAUCSL_rate_log'] = dff['CPIAUCSL_rate_log'].fillna(-400)
-
-
-
-    quadrant = []
-    for i in range(len(dff)):
-        if dff['GDP_rate_log'][i] != -400 and dff['CPIAUCSL_rate_log'][i] == -400:
-            quadrant.append(1)
-            #print('invest in ("Quadrant 1: Inflation up, GDP up")') #quadrant 1 consists of the following assets= ["Emerging equities", "International real estate", "Gold", "Commodities", "emerging bond spreads", "Inflation protected bonds"]  
-        elif dff['GDP_rate_log'][i] == -400 and dff['CPIAUCSL_rate_log'][i] == -400:
-            quadrant.append(2)
-
-            #print('invest in ("Quadrant 2: Inflation up, GDP down")') # quadrant 2 consists of the following assets= ["Gold", "Commodities", "Emerging bond spreads", "Inflation protected bonds", "cash"]
-        elif dff['GDP_rate_log'][i] == -400 and dff['CPIAUCSL_rate_log'][i] != -400:
-            quadrant.append(3)
-            #print('invest in ("Quadrant 3: Inflation down, GDP up")') # quadrant 3 consists of the following assets= ["Developed corporate bond spreads", "intermediate treasuries", "Developed real estate", "Developed equities"]  
-        elif dff['GDP_rate_log'][i] != -400 and dff['CPIAUCSL_rate_log'][i] != -400: # add if to remember state
-            quadrant.append(4)
-            #print('invest in ("Quadrant 4: Inflation down, GDP down")') #quadrant 4 consists of the following assets = ["Gold", "Long term treasuries", "cash"]
-        else:
-            quadrant.append(np.nan)
-
-  
-
-    # clean quadrants
-    quadrants = [i for i in  quadrant]
-    for i in range(1, len(quadrants)):
-        if quadrants[i] ==4 and quadrants[i-1] == 1:
-            quadrants[i]=1
-        
-
-    dff['quadrant_cleaned'] = quadrants
-
-    return dff['quadrant_cleaned']
 
   
 
@@ -231,6 +160,12 @@ def visualize_compare(variables, timerange):
 
 # ------------------------------------------------------------------------------
 # App layout
+quadrant_1_text = "Quadrant 1: Growing economy, rising inflation"
+quadrant_1_5_text = "Quadrant 1.5: Growing economy, stable/descending inflation, after season 1"
+quadrant_2_text = "Quadrant 2: Falling economy, rising inflation"
+quadrant_3_text = "Quadrant 3: Falling economy, falling inflation"
+quadrant_4_text = "Quadrant 4: Growing economy, stable/descending inflation, after season 2/3"
+
 app.layout = html.Div(
     [
         # ----------------------------------------------------------- first graph
@@ -254,6 +189,42 @@ app.layout = html.Div(
             value=["ECOGROWTH"],
             labelStyle={"fontSize": "20px", "margin-right": "5px"},
         ),
+       
+
+        dcc.Graph(
+            id="history_plot",
+            figure={},
+            style={"width": "100%", "height": "67vh", "backgroundColor": "black"},
+        ),
+        html.Br(),
+        html.Br(),
+
+
+        # ----------------------------------------------------------------------- second graph
+        html.H1(
+            "4 Quadrants visualization history",
+            style={"text-align": "center"},
+        ),
+        html.Br(),
+
+
+
+        html.Div([
+            html.P(quadrant_1_text),
+            html.P(quadrant_1_5_text),
+            html.P(quadrant_2_text),
+            html.P(quadrant_3_text),
+            html.P(quadrant_4_text)
+        ]),
+       
+        dcc.Graph(
+            id="quadrants", figure={}, style={"width": "100%", "height": "67vh"}
+        ),
+        html.Br(),
+        html.Br(),
+
+
+        # ---------------------------------------------------------------------- third graph
         html.Div(
             dcc.RangeSlider(
                 id="select_year",
@@ -276,31 +247,6 @@ app.layout = html.Div(
             },
         ),
         html.Br(),
-
-        dcc.Graph(
-            id="history_plot",
-            figure={},
-            style={"width": "100%", "height": "67vh", "backgroundColor": "black"},
-        ),
-        html.Br(),
-        html.Br(),
-
-
-        # ----------------------------------------------------------------------- second graph
-        html.H1(
-            "4 Quadrants visualization history",
-            style={"text-align": "center"},
-        ),
-        html.Br(),
-       
-        dcc.Graph(
-            id="quadrants", figure={}, style={"width": "100%", "height": "67vh"}
-        ),
-        html.Br(),
-        html.Br(),
-
-
-        # ---------------------------------------------------------------------- third graph
         html.H1("Compare current cycles with historical data", style={"text-align": "center"}),
         html.Br(),
       
@@ -336,7 +282,10 @@ def update_graph(variables, slider):
 
     container = f"The variables chosen by user was: {variables}"
 
-    return container, visualize_history(variables), visualize_quadrants(preprocess_quadrants(df)), visualize_compare(variables, slider)
+
+   # print(df[['GDP']])
+   # print(df[['CPIAUCSL']])
+    return container, visualize_history(variables), visualize_quadrants(quadrants_algorithm(preprocess_quadrants(df[['GDP']], df[['CPIAUCSL']]))), visualize_compare(variables, slider)
 
 
 # ------------------------------------------------------------------------------
